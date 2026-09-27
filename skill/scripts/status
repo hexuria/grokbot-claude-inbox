@@ -1,0 +1,51 @@
+#!/bin/sh
+# Show each bound session: is a watcher listening, how many replies Claude has
+# not read yet, whether its webhook env file exists, whether a Claude Code
+# session is open for it, and its rules and project folder.
+#
+# Usage: ~/.grokbot/status [session]
+set -u
+
+d="$HOME/.grokbot/inbox"
+
+# One "name<TAB>cwd" line per live Claude session, or "?" when it can't be asked.
+if command -v claude >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  live=$(claude agents --json 2>/dev/null \
+    | jq -r '.[] | select(.state != "done" and .state != "stopped") | "\(.name // "")\t\(.cwd // "")"' 2>/dev/null)
+else
+  live='?'
+fi
+
+fmt='%-20s %-8s %-7s %-8s %-7s %-17s %s\n'
+printf "$fmt" SESSION WATCHER UNREAD WEBHOOK CLAUDE RULES PROJECT
+for f in "$d"/*.jsonl; do
+  [ -f "$f" ] || continue
+  name=$(basename "$f" .jsonl)
+  [ $# -eq 0 ] || [ "$name" = "$1" ] || continue
+
+  lines=$(($(wc -l < "$f")))
+  seen=$(cat "$d/$name.seen" 2>/dev/null); case $seen in ''|*[!0-9]*) seen=0 ;; esac
+  unread=$((lines - seen)); [ "$unread" -lt 0 ] && unread=$lines
+
+  if kill -0 "$(cat "$d/$name.lock/pid" 2>/dev/null)" 2>/dev/null; then watcher=yes; else watcher=no; fi
+
+  env="$HOME/.grokbot/$name.env"
+  if [ -r "$env" ]; then
+    webhook=ok
+    project=$(. "$env" 2>/dev/null; printf '%s' "${PROJECT:-}")
+    rules=$(. "$env" 2>/dev/null; printf '%s' "${RULES:-}")
+  else
+    webhook=missing project='' rules=''
+  fi
+
+  if [ "$live" = '?' ]; then
+    claude='?'
+  elif printf '%s\n' "$live" | awk -F'\t' -v n="$name" -v p="$project" \
+      '$1 == n || (p != "" && $2 == p) { found = 1 } END { exit !found }'; then
+    claude=open
+  else
+    claude=-
+  fi
+
+  printf "$fmt" "$name" "$watcher" "$unread" "$webhook" "$claude" "${rules:--}" "${project:--}"
+done

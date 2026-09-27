@@ -1,0 +1,46 @@
+#!/bin/sh
+# Wait for the next unread lines in a session's inbox, print them, and exit.
+# Claude Code runs this as a background command and starts it again whenever
+# it exits. After WATCH_LIMIT seconds (default 1500) with nothing new it exits
+# with no output.
+#
+# Usage: ~/.grokbot/watch <session>
+set -u
+
+[ $# -eq 1 ] || { echo 'usage: watch <session>' >&2; exit 2; }
+case $1 in
+  ''|*[!a-z0-9-]*) echo "watch: session must be kebab-case, got '$1'" >&2; exit 2 ;;
+esac
+
+d="$HOME/.grokbot/inbox"; f="$d/$1.jsonl"; s="$d/$1.seen"; lock="$d/$1.lock"
+limit=${WATCH_LIMIT:-1500}
+
+[ -f "$f" ] || { echo "watch: $f not found; '$1' is not bound" >&2; exit 2; }
+
+# One watcher per inbox. A lock left by a dead watcher is taken over.
+if ! mkdir "$lock" 2>/dev/null; then
+  if kill -0 "$(cat "$lock/pid" 2>/dev/null)" 2>/dev/null; then
+    echo "watch: a watcher for $1 is already running" >&2; exit 1
+  fi
+  rm -rf "$lock"; mkdir "$lock" || exit 1
+fi
+echo $$ > "$lock/pid"
+trap 'rm -rf "$lock"' EXIT
+trap 'exit 1' INT TERM HUP
+
+# Resume after the last line printed. Start over if the inbox was replaced
+# by a shorter file.
+n=$(cat "$s" 2>/dev/null); case $n in ''|*[!0-9]*|0[0-9]*) n=0 ;; esac
+[ "$n" -gt "$(($(wc -l < "$f")))" ] && n=0
+
+waited=0
+while [ "$(($(wc -l < "$f")))" -le "$n" ]; do
+  [ "$waited" -ge "$limit" ] && exit 0
+  sleep 5; waited=$((waited + 5))
+done
+
+tail -n +$((n + 1)) "$f" | while IFS= read -r line; do
+  n=$((n + 1))
+  [ -n "$line" ] && printf 'grokbot inbox #%s: %s\n' "$n" "$line"
+  echo "$n" > "$s.tmp" && mv "$s.tmp" "$s"
+done
