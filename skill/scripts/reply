@@ -1,0 +1,34 @@
+#!/bin/sh
+# Append a Grok Bot reply to a Claude Code session's inbox.
+#
+# Usage:
+#   ~/.grokbot/reply <session> <user|relay> <<'GROKBOT_END'
+#   re <question>: <answer>
+#   GROKBOT_END
+#
+# user:  you are passing on the user's own answer.
+# relay: you decided under the session's standing rules.
+set -eu
+
+[ $# -eq 2 ] || { echo 'usage: reply <session> <user|relay> < message' >&2; exit 2; }
+session=$1 by=$2
+
+case $session in
+  ''|*[!a-z0-9-]*) echo "reply: session must be kebab-case, got '$session'" >&2; exit 2 ;;
+esac
+case $by in
+  user|relay) ;;
+  *) echo "reply: second argument must be user or relay, got '$by'" >&2; exit 2 ;;
+esac
+
+inbox="$HOME/.grokbot/inbox/$session.jsonl"
+[ -f "$inbox" ] || { echo "reply: $inbox not found; '$session' is not bound" >&2; exit 2; }
+
+message=$(cat)
+[ -n "$message" ] || { echo 'reply: empty message' >&2; exit 2; }
+
+line=$(jq -cn --arg session "$session" --arg by "$by" \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg message "$message" \
+  '{session:$session, from:"grokbot", by:$by, ts:$ts, message:$message}')
+printf '%s\n' "$line" >> "$inbox"
+echo "reply: wrote line $(($(wc -l < "$inbox"))) of $inbox"

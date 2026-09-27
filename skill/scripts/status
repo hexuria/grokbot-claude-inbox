@@ -1,0 +1,27 @@
+#!/bin/sh
+# Show each bound session: is a watcher listening, how many replies Claude has
+# not read yet, whether its webhook env file exists, and whether a Claude Code
+# session with the same name is open.
+#
+# Usage: ~/.grokbot/status [session]
+set -u
+
+d="$HOME/.grokbot/inbox"
+open=$(claude agents --json 2>/dev/null | jq -r '.[] | select(.state != "done" and .state != "stopped") | .name // empty' 2>/dev/null)
+
+printf '%-24s %-8s %-7s %-8s %s\n' SESSION WATCHER UNREAD WEBHOOK CLAUDE
+for f in "$d"/*.jsonl; do
+  [ -f "$f" ] || continue
+  name=$(basename "$f" .jsonl)
+  [ $# -eq 0 ] || [ "$name" = "$1" ] || continue
+
+  lines=$(($(wc -l < "$f")))
+  seen=$(cat "$d/$name.seen" 2>/dev/null); case $seen in ''|*[!0-9]*) seen=0 ;; esac
+  unread=$((lines - seen)); [ "$unread" -lt 0 ] && unread=$lines
+
+  if kill -0 "$(cat "$d/$name.lock/pid" 2>/dev/null)" 2>/dev/null; then watcher=yes; else watcher=no; fi
+  if [ -r "$HOME/.grokbot/$name.env" ]; then webhook=ok; else webhook=missing; fi
+  if printf '%s\n' "$open" | grep -qx "$name"; then claude=open; else claude=-; fi
+
+  printf '%-24s %-8s %-7s %-8s %s\n' "$name" "$watcher" "$unread" "$webhook" "$claude"
+done

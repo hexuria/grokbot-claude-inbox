@@ -1,0 +1,39 @@
+#!/bin/sh
+# Send a message from a Claude Code session to its Grok Bot webhook routine.
+#
+# Usage:
+#   ~/.grokbot/ping <session> <need> <<'GROKBOT_END'
+#   <message>
+#   GROKBOT_END
+#
+# need: decision | merge | pr_ready | recap | update | blocker
+# Reads WEBHOOK_URL and WEBHOOK_HEADER from ~/.grokbot/<session>.env.
+set -eu
+
+[ $# -eq 2 ] || { echo 'usage: ping <session> <need> < message' >&2; exit 2; }
+session=$1 need=$2
+
+case $session in
+  ''|*[!a-z0-9-]*) echo "ping: session must be kebab-case, got '$session'" >&2; exit 2 ;;
+esac
+case $need in
+  decision|merge|pr_ready|recap|update|blocker) ;;
+  *) echo "ping: unknown need '$need'" >&2; exit 2 ;;
+esac
+
+env_file="$HOME/.grokbot/$session.env"
+[ -r "$env_file" ] || { echo "ping: $env_file not found; '$session' is not bound" >&2; exit 2; }
+. "$env_file"
+[ -n "${WEBHOOK_URL:-}" ] && [ -n "${WEBHOOK_HEADER:-}" ] ||
+  { echo "ping: $env_file needs WEBHOOK_URL and WEBHOOK_HEADER" >&2; exit 2; }
+
+message=$(cat)
+[ -n "$message" ] || { echo 'ping: empty message' >&2; exit 2; }
+
+body=$(jq -cn --arg session "$session" --arg need "$need" --arg message "$message" \
+  '{session:$session, need:$need, message:$message}')
+
+curl -sS --fail-with-body --max-time 30 "$WEBHOOK_URL" \
+  -H "$WEBHOOK_HEADER" \
+  -H 'Content-Type: application/json' \
+  --data-binary "$body"
