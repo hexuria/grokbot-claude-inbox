@@ -8,7 +8,28 @@
 #
 # need: decision | merge | pr_ready | recap | update | blocker
 # Reads WEBHOOK_URL and WEBHOOK_HEADER from ~/.grokbot/<session>.env.
+# Needs curl 7.76 or newer and awk; runs under sh, bash, and Git Bash.
 set -eu
+
+json_string() {  # stdin -> one JSON string literal, without jq
+  awk 'BEGIN { for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = sprintf("\\u%04x", i) }
+    function esc(s,   out, i, c) {
+      out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") out = out "\\\\"
+        else if (c == "\"") out = out "\\\""
+        else if (c == "\n") out = out "\\n"
+        else if (c == "\r") out = out "\\r"
+        else if (c == "\t") out = out "\\t"
+        else if (c in ctl) out = out ctl[c]
+        else out = out c
+      }
+      return out
+    }
+    { body = (NR > 1) ? body "\\n" esc($0) : esc($0) }
+    END { printf "\"%s\"", body }'
+}
 
 [ $# -eq 2 ] || { echo 'usage: ping <session> <need> < message' >&2; exit 2; }
 session=$1 need=$2
@@ -40,8 +61,9 @@ esac
 message=$(cat)
 [ -n "$message" ] || { echo 'ping: empty message' >&2; exit 2; }
 
-body=$(jq -cn --arg session "$session" --arg need "$need" --arg message "$message" \
-  '{session:$session, need:$need, message:$message}')
+body=$(printf '{"session":%s,"need":%s,"message":%s}' \
+  "$(printf '%s' "$session" | json_string)" "$(printf '%s' "$need" | json_string)" \
+  "$(printf '%s' "$message" | json_string)")
 
 curl -sS --fail-with-body --max-time 30 "$WEBHOOK_URL" \
   -H "$WEBHOOK_HEADER" \

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Unbind a session: stop its watcher, remove its env file, seen marker, lock,
+# and standing prompt, and archive its inbox. The routine on Grok Bot is
+# deleted separately.
+#
+# Usage: ~/.grokbot/unbind <session> [--delete]
+#   --delete removes the inbox instead of archiving it.
+set -eu
+
+[ $# -ge 1 ] || { echo 'usage: unbind <session> [--delete]' >&2; exit 2; }
+session=$1
+case $session in
+  ''|*[!a-z0-9-]*) echo "unbind: session must be kebab-case, got '$session'" >&2; exit 2 ;;
+esac
+
+g="$HOME/.grokbot"; d="$g/inbox"; f="$d/$session.jsonl"
+[ -f "$f" ] || [ -f "$g/$session.env" ] || { echo "unbind: '$session' is not bound" >&2; exit 2; }
+
+if [ -f "$d/$session.lock/pid" ]; then
+  kill "$(cat "$d/$session.lock/pid")" 2>/dev/null && echo "unbind: stopped the watcher" || true
+fi
+rm -f "$g/$session.env" "$g/$session.standing-prompt.txt" "$d/$session.seen"
+rm -rf "$d/$session.lock"
+
+if [ -f "$f" ]; then
+  if [ "${2:-}" = --delete ]; then
+    rm -f "$f"; echo "unbind: deleted $f"
+  else
+    mkdir -p "$d/archive"
+    dest="$d/archive/$session-$(date +%Y%m%d-%H%M%S).jsonl"
+    mv "$f" "$dest"; echo "unbind: archived the inbox to $dest"
+  fi
+fi
+echo "unbind: $session is unbound; delete the routine \"Claude · $session\" on Grok Bot"

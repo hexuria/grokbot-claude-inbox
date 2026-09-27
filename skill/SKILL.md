@@ -3,13 +3,13 @@ name: grokbot-claude-inbox
 description: >-
   Relay Claude Code sessions to the user's phone: each session pings its own
   webhook routine, and answers go back through a file inbox. Use when the user
-  says setup, add session, list sessions, reconnect, or cleanup, and whenever
-  the user answers a question a Claude session asked.
+  says setup, add session, list sessions, reconnect, or cleanup, when they give
+  a session work, and whenever they answer a question a Claude session asked.
 ---
 
 # Claude Code relay
 
-You relay between the user and the Claude Code sessions on their Mac. A bound session never waits in its own chat. It pings you through its webhook routine, you brief the user on their phone, and the answer goes back into the session's inbox, where a watcher wakes Claude. One relay serves any number of sessions.
+You relay between the user and the Claude Code sessions on their computer. A bound session never waits in its own chat. It pings you through its webhook routine, you brief the user on their phone, and the answer goes back into the session's inbox, where a watcher wakes Claude. One relay serves any number of sessions.
 
 ```text
 Claude ──ping──▶ routine "Claude · <session>" ──brief──▶ user's phone
@@ -17,22 +17,24 @@ Claude ──ping──▶ routine "Claude · <session>" ──brief──▶ us
 watch ◀── ~/.grokbot/inbox/<session>.jsonl ◀── reply ◀────────┘
 ```
 
-## Files on the Mac
+You run on Grok Bot's box. `Shell` runs on the user's computer, where every file below lives. You read this skill's `references/` here; its `scripts/` get installed there.
 
-A session name is kebab-case and keys everything below.
+**Windows.** Claude runs `ping` and `watch` through Git Bash, so the standing prompt is the same on both systems. Your own commands change shape: every `~/.grokbot/<name>` in this skill becomes `powershell -NoProfile -File $HOME\.grokbot\<name>.ps1` with the same arguments, and a message goes in as `-Message "<text>"` instead of a heredoc.
+
+## Files on the computer
 
 | Path under `~/.grokbot` | Holds |
 |---|---|
-| `ping`, `watch`, `reply`, `status` | Helper scripts from this skill's [`scripts/`](scripts/) folder |
-| `<session>.env` | `WEBHOOK_URL` and `WEBHOOK_HEADER` for the routine, plus `PROJECT`, `RULES`, and `ROUTINE`; mode 600 |
+| `ping`, `watch`, `reply`, `status`, `bind`, `unbind` | The scripts from this skill's [`scripts/`](scripts/) folder, plus their `.ps1` twins from [`scripts/windows/`](scripts/windows/) on Windows |
+| `src/grokbot-claude-inbox` | A clone of this repository, where the scripts are copied from |
+| `<session>.env` | `WEBHOOK_URL`, `WEBHOOK_HEADER`, `PROJECT`, `RULES`, `ROUTINE`; mode 600 |
+| `<session>.standing-prompt.txt` | The filled standing prompt Claude was given |
 | `inbox/<session>.jsonl` | Your replies, one JSON line each, append-only |
 | `inbox/<session>.seen` | How many inbox lines Claude has read |
 | `inbox/<session>.lock/` | Present while a watcher runs |
 | `inbox/archive/` | Inboxes of removed sessions |
 
-The env files are the registry: a session is bound when its env file and inbox exist. `~/.grokbot` is mode 700. Webhook URLs and tokens live only in the env files: keep them out of chat, inbox lines, and anything you give Claude.
-
-The prompts you hand out live in this skill's [`references/`](references/) folder. If that folder is missing, fetch them from `https://raw.githubusercontent.com/hexuria/grokbot-claude-inbox/main/skill/references/`.
+The env files are the registry: a session is bound when its env file and inbox exist. Webhook URLs and tokens live only in the env files: keep them out of chat, inbox lines, and anything you give Claude.
 
 ## Answer a session
 
@@ -50,21 +52,45 @@ Use this whenever the user replies to a brief, and whenever a standing rule lets
    The second argument is `user` when you pass on the user's words, and `relay` when you decided under a standing rule. Start with `re <the question>:` so Claude can match the answer. The message ends at a line reading `GROKBOT_END`, so reword any such line.
 3. Done when `reply` prints the line it wrote. `~/.grokbot/status <session>` shows `UNREAD 0` once Claude has read it.
 
+## Give a session work
+
+Work reaches Claude the same way as an answer. Start the message with `task:`:
+
+```sh
+~/.grokbot/reply <session> user <<'GROKBOT_END'
+task: <what to do, what done looks like, any limits>
+GROKBOT_END
+```
+
+Claude does it and pings when it is done or blocked.
+
 ## Add a session
 
-Triggers: setup, add session, bind session. Steps 1–3 run once per Mac; skip each one already in place.
+Triggers: setup, add session, bind session. Steps 1–3 run once per computer; skip each one already in place.
 
-1. **Prerequisites.** Check for `jq` and `curl` 7.76 or newer on the Mac. Tell the user once: replies run as commands on their Mac, so if Grok Bot's local execution asks before each command, replies stall while they are away. Standing permission is their choice.
-2. **Scripts.** Install the four scripts from this skill's `scripts/` folder, replacing older copies:
+1. **Prerequisites.** On a Mac: `git`, `curl` 7.76 or newer, and `awk`, all present by default. On Windows: PowerShell 5.1 or newer, Git for Windows, and `curl`. Tell the user once: replies run as commands on their computer, so if Grok Bot's local execution asks before each command, replies stall while they are away. Standing permission is their choice.
+2. **Scripts.** Clone this repository on the computer and copy the scripts out of the clone. Files arrive by `git` and `cp`; retyping their contents truncates them.
 
    ```sh
    mkdir -p ~/.grokbot/inbox && chmod 700 ~/.grokbot ~/.grokbot/inbox
-   cp <skill folder>/scripts/ping <skill folder>/scripts/watch <skill folder>/scripts/reply <skill folder>/scripts/status ~/.grokbot/
-   chmod 755 ~/.grokbot/ping ~/.grokbot/watch ~/.grokbot/reply ~/.grokbot/status
+   src=~/.grokbot/src/grokbot-claude-inbox
+   if [ -d "$src/.git" ]; then git -C "$src" pull -q --ff-only; else git clone -q --depth 1 https://github.com/hexuria/grokbot-claude-inbox "$src"; fi
+   cp "$src"/skill/scripts/ping "$src"/skill/scripts/watch "$src"/skill/scripts/reply "$src"/skill/scripts/status "$src"/skill/scripts/bind "$src"/skill/scripts/unbind ~/.grokbot/
+   chmod 755 ~/.grokbot/ping ~/.grokbot/watch ~/.grokbot/reply ~/.grokbot/status ~/.grokbot/bind ~/.grokbot/unbind
+   for s in ping watch reply status bind unbind; do sh -n ~/.grokbot/$s || echo "BROKEN $s"; done
    ```
 
-   If the folder is missing, fetch each script from `https://raw.githubusercontent.com/hexuria/grokbot-claude-inbox/main/skill/scripts/<name>` in place of the `cp`.
-3. **Claude permissions.** Claude must run `ping` and `watch` without a permission prompt, because a prompt blocks an unattended session. This edits the user's Claude config, so confirm with a question widget first. Then merge these rules into `permissions.allow` in `~/.claude/settings.json`, with `<home>` as the user's home directory:
+   Windows:
+
+   ```powershell
+   $g = "$HOME\.grokbot"; New-Item -ItemType Directory -Force "$g\inbox" | Out-Null
+   $src = "$g\src\grokbot-claude-inbox"
+   if (Test-Path "$src\.git") { git -C $src pull -q --ff-only } else { git clone -q --depth 1 https://github.com/hexuria/grokbot-claude-inbox $src }
+   Copy-Item "$src\skill\scripts\ping", "$src\skill\scripts\watch" $g
+   Copy-Item "$src\skill\scripts\windows\*.ps1" $g
+   ```
+
+3. **Claude permissions.** Claude must run `ping` and `watch` without a permission prompt, because a prompt blocks an unattended session. This edits the user's Claude config, so confirm with a question widget first. Then merge these rules into `permissions.allow` in `~/.claude/settings.json`, with `<home>` as the user's home directory (`/c/Users/<you>` under Git Bash on Windows):
 
    ```json
    "Bash(~/.grokbot/ping:*)",  "Bash(<home>/.grokbot/ping:*)",
@@ -72,72 +98,83 @@ Triggers: setup, add session, bind session. Steps 1–3 run once per Mac; skip e
    ```
 
    A rule matches the command as typed, so both path forms are needed. Offer these rules only; bypass-permissions mode is the user's call, not yours to suggest.
-4. **Project and name.** Ask for the project folder as an absolute path. Then ask for the session name with a question widget that allows a custom answer, suggesting the folder's name in kebab-case. If `~/.grokbot/<session>.env` already exists, the session is bound: go to **Reconnect a session** instead.
+4. **Project and name.** Ask for the project folder as an absolute path. If it does not exist, ask with a question widget whether to create it or use another path. Then ask for the session name with a question widget that allows a custom answer, suggesting the folder's name in kebab-case. If `~/.grokbot/<session>.env` already exists, the session is bound: go to **Reconnect a session** instead.
 5. **Standing rules.** Ask what you may decide for this session without the user. `ask`, the default, brings every decision to the user. `merge-when-green` also lets you approve a merge once you have confirmed CI, mergeability, and the review yourself. The exact wording is in the routine template. Logins, product decisions, spending, and anything irreversible always go to the user.
-6. **Routine.** Create a webhook routine named `Claude · <session>`. Its instruction is [`references/routine-prompt.md`](references/routine-prompt.md), filled in. Note its id.
-7. **Env file and inbox.** Get the routine's webhook URL and full Authorization header without putting them in chat: read them from the routine if it shows them to you, or send the user a deep link to the routine's webhook settings together with a secret request. Then write:
+6. **Routine.** Create a webhook routine named `Claude · <session>`. Its instruction is [`references/routine-prompt.md`](references/routine-prompt.md), filled in. The result names the routine's folder, such as `claude-<session>`; that is its id.
+7. **Bind.** You cannot read the routine's webhook URL or token; only the user can, from the routine's page. Send them both links:
+
+   ```text
+   grokbot://app/v1/sidebar?target=webhook-url&automation=<routine folder>
+   grokbot://app/v1/sidebar?target=webhook-header&automation=<routine folder>
+   ```
+
+   Then get the two values onto the computer. When the user is at the computer, two dialogs open there and nothing passes through chat:
 
    ```sh
-   umask 077
-   cat > ~/.grokbot/<session>.env <<'GROKBOT_END'
-   WEBHOOK_URL='https://api2.cursor.sh/automations/webhook/...'
-   WEBHOOK_HEADER='Authorization: Bearer ...'
-   PROJECT='<absolute project folder>'
-   RULES='ask'
-   ROUTINE='<routine id>'
+   PROJECT='<folder>' RULES='<rules>' ROUTINE='<routine folder>' ~/.grokbot/bind <session> --dialog
+   ```
+
+   When they are away from it, they paste both values in chat and you pass them on:
+
+   ```sh
+   ~/.grokbot/bind <session> <<'GROKBOT_END'
+   WEBHOOK_URL=<pasted URL>
+   WEBHOOK_HEADER=<pasted header>
+   PROJECT=<folder>
+   RULES=<rules>
+   ROUTINE=<routine folder>
    GROKBOT_END
-   touch ~/.grokbot/inbox/<session>.jsonl
-   chmod 600 ~/.grokbot/<session>.env ~/.grokbot/inbox/<session>.jsonl
    ```
 
-   The header carries the routine's bearer token, a separate value from the URL. If neither path gives you the values, hand the user this block to run on the Mac themselves. Then prove the webhook before going on:
+   Tell them the token now sits in chat history. Either way `bind` checks the values, writes the env file and the inbox, and sends a self-test ping. Continue only when it prints `bound`. A 401 means the header is wrong: send the links again and rerun `bind`. On Windows, set `$env:PROJECT`, `$env:RULES`, and `$env:ROUTINE` first and run `bind.ps1 <session> -Dialog`, or pipe the same lines in as a here-string.
+8. **Standing prompt.** Fill [`references/standing-prompt.md`](references/standing-prompt.md) and save it, so it can be pasted or read later. It holds no secrets.
 
    ```sh
-   ~/.grokbot/ping <session> update <<< 'relay self-test'
+   cat > ~/.grokbot/<session>.standing-prompt.txt <<'GROKBOT_END'
+   <filled standing prompt>
+   GROKBOT_END
    ```
 
-   It must exit 0. `ping` refuses a header that holds the URL, and a 401 means the token is wrong. Fix the file before step 8.
-8. **Connect Claude.** Follow **Connect Claude** below.
-9. **Test.** The standing prompt ends with Claude sending a `decision` ping that asks for `pong`, and the routine answers it. Setup is done when `tail -1 ~/.grokbot/inbox/<session>.jsonl` is that pong line and `~/.grokbot/status <session>` shows `WATCHER yes` and `UNREAD 0`. Confirm: "Bound `<session>`. Sessions now: …". If nothing arrives within a few minutes, see **Repair**.
+9. **Connect Claude.** Follow **Connect Claude** below.
+10. **Test.** The standing prompt ends with Claude sending a `decision` ping that asks for `pong`, and the routine answers it. The watcher prints each reply and exits, and Claude starts it again within seconds, so `WATCHER` can read `no` for a moment right after a reply. Setup is proven when `tail -1 ~/.grokbot/inbox/<session>.jsonl` is the pong line and `~/.grokbot/status <session>` shows `UNREAD 0`; check for `WATCHER yes` again ten seconds later. Confirm: "Bound `<session>`. Sessions now: …". If nothing arrives within a few minutes, see **Repair**.
 
 ## Connect Claude
 
-A Claude session is bound by giving it the standing prompt from [`references/standing-prompt.md`](references/standing-prompt.md) once. First look for a session that is already running:
+A Claude session is bound by giving it the standing prompt once. First look for a session that is already running:
 
 ```sh
 claude agents --json --all
 ```
 
-Each entry has `name`, `cwd`, `kind`, and a state. `interactive` entries are open terminals. `background` entries have `state` `blocked`, `done`, `stopped`, or a running state; `blocked` means it is waiting for a person, on a permission prompt or a question. Match on `name`, or on `cwd` equal to the project folder, and ask which one when several match.
+Each entry has `name`, `cwd`, `kind`, and a state. `interactive` entries are open terminals. `background` entries are `working`, `blocked`, `done`, or `stopped`; `blocked` means it is waiting for a person, on a permission prompt or a question. Match on `name`, or on `cwd` equal to the project folder, and ask which one when several match.
 
 | What you find | What to do |
 |---|---|
 | An open interactive session | Start nothing. The user pastes the standing prompt into it. |
-| A running or `blocked` background session | Start nothing. The user runs `claude attach <id>`, answers whatever it is waiting on, pastes the prompt, and leaves with ←. |
-| A `stopped` or `done` background session the user wants back | Resume it with its history: `claude --bg --resume <sessionId> "<prompt>"` from the project folder. |
-| Nothing | Ask whether to start it for them or whether they will open it and paste. |
+| A `working` or `blocked` background session | Start nothing. The user runs `claude attach <id>`, answers whatever it is waiting on, pastes the prompt, and leaves with ←. |
+| A `stopped` or `done` background session the user wants back | Resume it with its history from the project folder: `claude --bg --resume <sessionId> "$(cat ~/.grokbot/<session>.standing-prompt.txt)"`. |
+| Nothing | Ask with a question widget: start background Claude for them, or they paste the prompt themselves. |
 
-Starting or resuming beside a live session creates a second Claude on the same inbox, and the two fight over it. To start a new one, pass the prompt through a quoted heredoc so the shell expands nothing:
+Starting or resuming beside a live session creates a second Claude on the same inbox, and the two fight over it. To start a new one:
 
 ```sh
-cd <folder> && claude --bg -n <session> "$(cat <<'GROKBOT_END'
-<standing prompt, filled in>
-GROKBOT_END
-)"
+cd <folder> && claude --bg -n <session> "$(cat ~/.grokbot/<session>.standing-prompt.txt)"
 ```
+
+On Windows: `Set-Location <folder>; claude --bg -n <session> (Get-Content -Raw "$HOME\.grokbot\<session>.standing-prompt.txt")`. The output names the session id, which the user opens with `claude attach <id>`.
 
 ## List sessions
 
 Run `~/.grokbot/status` and show it. Then point out:
 
-- `WATCHER no` with `UNREAD` above 0: Claude is not listening. Offer **Reconnect a session**.
-- `WEBHOOK missing`: pings from that session cannot arrive. Rewrite its env file (Add, step 7).
+- `WATCHER no` with `UNREAD` above 0 for longer than a few seconds: Claude is not listening. Offer **Reconnect a session**.
+- `WEBHOOK missing`: pings from that session cannot arrive. Rerun **Bind**.
 - `CLAUDE -`: no Claude session is open under that name or project folder. Offer **Connect Claude**.
 - A background session whose `claude agents --json` state is `blocked`: it waits for a person. The user runs `claude attach <id>` to see what it needs.
 
 ## Reconnect a session
 
-Triggers: reconnect, rebind, resume a session. Use this when Claude restarted, lost the standing prompt after `/clear` or a long compaction, or a different Claude session should take over the name. The routine, env file, and inbox stay as they are. Run **Connect Claude** again. The inbox remembers what Claude has read, so old replies are not replayed.
+Triggers: reconnect, rebind, resume a session. Use this when Claude restarted, lost the standing prompt after `/clear` or a long compaction, or a different Claude session should take over the name. The routine, env file, inbox, and saved standing prompt stay as they are. Run **Connect Claude** again. The inbox remembers what Claude has read, so old replies are not replayed.
 
 ## Remove a session
 
@@ -154,16 +191,7 @@ Triggers: cleanup, remove session, unbind.
       ```
 
    2. Delete the routine `Claude · <session>`.
-   3. Remove the files. The first line stops a watcher that is still running:
-
-      ```sh
-      kill "$(cat ~/.grokbot/inbox/<session>.lock/pid 2>/dev/null)" 2>/dev/null
-      rm -f ~/.grokbot/<session>.env ~/.grokbot/inbox/<session>.seen
-      rm -rf ~/.grokbot/inbox/<session>.lock
-      mkdir -p ~/.grokbot/inbox/archive
-      mv ~/.grokbot/inbox/<session>.jsonl ~/.grokbot/inbox/archive/<session>-$(date +%Y%m%d-%H%M%S).jsonl
-      ```
-
+   3. Run `~/.grokbot/unbind <session>`. It stops a watcher that is still running, removes the env file, the seen marker, the lock, and the saved prompt, and archives the inbox; `--delete` (`-Delete` on Windows) removes the inbox instead.
    4. If Claude runs as a background session, offer `claude stop <id>`, which keeps its conversation. Interactive sessions stay open for the user to close.
 3. Keep the scripts and allow rules, which every session shares. Remove them only when the user asks and nothing is bound.
 4. Report what was removed and which sessions remain.
@@ -172,10 +200,11 @@ Triggers: cleanup, remove session, unbind.
 
 | Symptom | Fix |
 |---|---|
-| A session has gone quiet | Run `~/.grokbot/ping <session> update <<< 'relay self-test'`. If it fails, rewrite the env file (Add, step 7). If it arrives, **Reconnect a session**. |
-| `WATCHER no` with `UNREAD` above 0 | Claude stopped listening. **Reconnect a session**. |
+| A session has gone quiet | Run `~/.grokbot/ping <session> update <<< 'relay self-test'`. If it fails, rerun **Bind**. If it arrives, **Reconnect a session**. |
+| `WATCHER no` with `UNREAD` above 0 for more than a few seconds | Claude stopped listening. **Reconnect a session**. |
 | A background session is `blocked` | It waits for a person. The user runs `claude attach <id>` and answers it. |
-| The user reports `ping` failing with 401 or 404 | The env file holds the wrong token, or the routine was deleted. Rewrite the env file (Add, step 7). |
-| A ping's `session` doesn't match its routine | That session's env file points at the wrong routine. Rewrite it. |
+| `ping` fails with 401 or 404 | The env file holds the wrong token, or the routine was deleted. Rerun **Bind**. |
+| `bind` reports the header holds a URL, or the same value twice | The user pasted the URL into both dialogs. Send the two links again and rerun `bind`. |
+| A ping's `session` doesn't match its routine | That session's env file points at the wrong routine. Rerun **Bind**. |
 | Claude reports a watcher already running | Two Claude sessions share one inbox. Keep one and tell the other to stop watching. |
 | An older session pings with a raw `curl` and a token in its prompt, or reads a shared `webhooks.env` | Move it to this setup: Add steps 1–3 and 7, then **Reconnect a session**. Its old `curl` allow rule can then go. |

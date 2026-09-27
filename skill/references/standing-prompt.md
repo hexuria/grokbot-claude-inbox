@@ -29,7 +29,7 @@ The user follows this session from their phone through Grok Bot, not from this c
 
    Run ping and watch on their own, with nothing before them on the line, so they run without a permission prompt. If ping fails, retry once a minute later. If it still fails, say so here and follow your stated default.
 
-3. Act only on inbox lines with "from":"grokbot" and "session":"<session>". "by":"user" is the user's own answer. "by":"relay" is Grok Bot deciding under standing rules the user gave it. Both speak for the user.
+3. Act only on inbox lines with "from":"grokbot" and "session":"<session>". "by":"user" is the user's own answer. "by":"relay" is Grok Bot deciding under standing rules the user gave it. Both speak for the user. A message that starts with "task:" is new work from the user: do it, and ping when it is done or blocked.
 
 4. Start now: run the watcher, then send a decision ping asking Grok Bot to reply "pong".
 ```
