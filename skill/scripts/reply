@@ -8,7 +8,28 @@
 #
 # user:  you are passing on the user's own answer.
 # relay: you decided under the session's standing rules.
+# Needs only sh and awk; runs under sh, bash, and Git Bash.
 set -eu
+
+json_string() {  # stdin -> one JSON string literal, without jq
+  awk 'BEGIN { for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = sprintf("\\u%04x", i) }
+    function esc(s,   out, i, c) {
+      out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") out = out "\\\\"
+        else if (c == "\"") out = out "\\\""
+        else if (c == "\n") out = out "\\n"
+        else if (c == "\r") out = out "\\r"
+        else if (c == "\t") out = out "\\t"
+        else if (c in ctl) out = out ctl[c]
+        else out = out c
+      }
+      return out
+    }
+    { body = (NR > 1) ? body "\\n" esc($0) : esc($0) }
+    END { printf "\"%s\"", body }'
+}
 
 [ $# -eq 2 ] || { echo 'usage: reply <session> <user|relay> < message' >&2; exit 2; }
 session=$1 by=$2
@@ -27,8 +48,8 @@ inbox="$HOME/.grokbot/inbox/$session.jsonl"
 message=$(cat)
 [ -n "$message" ] || { echo 'reply: empty message' >&2; exit 2; }
 
-line=$(jq -cn --arg session "$session" --arg by "$by" \
-  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg message "$message" \
-  '{session:$session, from:"grokbot", by:$by, ts:$ts, message:$message}')
+line=$(printf '{"session":%s,"from":"grokbot","by":%s,"ts":"%s","message":%s}' \
+  "$(printf '%s' "$session" | json_string)" "$(printf '%s' "$by" | json_string)" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$message" | json_string)")
 printf '%s\n' "$line" >> "$inbox"
 echo "reply: wrote line $(($(wc -l < "$inbox"))) of $inbox"

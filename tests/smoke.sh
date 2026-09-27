@@ -56,8 +56,50 @@ check 'ping sends session and need'            '[ "$(jq -r "[.session,.need]|joi
 expected=$(printf '%s\n%s' 'PR #12 is ready: "quotes", $HOME, `backticks`' 'second line')
 check 'ping keeps the message byte for byte'   '[ "$(jq -r .message "$tmp/body")" = "$expected" ]'
 
+"$g/ping" demo update >/dev/null <<'GROKBOT_END'
+unicode ünïcødé 日本 🎉 and a tab	and back\slash
+GROKBOT_END
+check 'ping encodes unicode, tabs, and backslashes' '[ "$(jq -r .message "$tmp/body")" = "$(printf "unicode ünïcødé 日本 🎉 and a tab\tand back\\\\slash")" ]'
+
 printf "WEBHOOK_URL='http://127.0.0.1:%s/fail'\nWEBHOOK_HEADER='Authorization: Bearer x'\n" "$port" > "$g/down.env"
 echo hi | "$g/ping" down update >/dev/null 2>&1;       check 'ping fails loudly on a server error' '[ $? -ne 0 ]'
+
+printf "WEBHOOK_URL='https://example.invalid/hook'\nWEBHOOK_HEADER='Authorization: Bearer https://example.invalid/hook'\n" > "$g/mixed.env"
+err=$(echo hi | "$g/ping" mixed update 2>&1 >/dev/null); rc=$?
+check 'ping refuses a header that holds the URL' '[ $rc -eq 2 ] && printf "%s" "$err" | grep -q "holds a URL"'
+printf "WEBHOOK_URL='https://example.invalid/hook'\nWEBHOOK_HEADER='crsr_token_without_header_name'\n" > "$g/bare.env"
+echo hi | "$g/ping" bare update >/dev/null 2>&1;       check 'ping refuses a header with no name'  '[ $? -eq 2 ]'
+printf "WEBHOOK_URL='crsr_token_in_the_url_slot'\nWEBHOOK_HEADER='Authorization: Bearer x'\n" > "$g/swapped.env"
+echo hi | "$g/ping" swapped update >/dev/null 2>&1;    check 'ping refuses a token in the URL slot' '[ $? -eq 2 ]'
+
+# --- bind -------------------------------------------------------------------
+"$g/bind" bound >/dev/null 2>&1 <<GROKBOT_END
+WEBHOOK_URL='http://127.0.0.1:$port/hook'
+WEBHOOK_HEADER="Authorization: Bearer test-token"
+PROJECT=/tmp/it's here
+RULES=merge-when-green
+ROUTINE=claude-bound
+GROKBOT_END
+check 'bind writes the env file and pings'      '[ $? -eq 0 ] && [ -f "$g/bound.env" ] && [ -f "$g/inbox/bound.jsonl" ]'
+check 'bind strips quotes and keeps apostrophes' '[ "$(. "$g/bound.env"; printf "%s|%s|%s|%s" "$WEBHOOK_URL" "$WEBHOOK_HEADER" "$PROJECT" "$ROUTINE")" = "http://127.0.0.1:'"$port"'/hook|Authorization: Bearer test-token|/tmp/it'"'"'s here|claude-bound" ]'
+check 'bind makes the files private'            '[ "$(stat -f %Lp "$g/bound.env")" = 600 ] && [ "$(stat -f %Lp "$g/inbox/bound.jsonl")" = 600 ]'
+check 'bind sends the self-test ping'           '[ "$(jq -r .message "$tmp/body")" = "relay self-test" ] && [ "$(jq -r .session "$tmp/body")" = bound ]'
+
+printf 'WEBHOOK_URL=http://127.0.0.1:%s/hook\nWEBHOOK_HEADER=crsr_bare_token\n' "$port" | "$g/bind" bare2 >/dev/null 2>&1
+check 'bind completes a bare token into a header' '[ "$(. "$g/bare2.env"; printf "%s" "$WEBHOOK_HEADER")" = "Authorization: Bearer crsr_bare_token" ]'
+printf 'WEBHOOK_URL=http://127.0.0.1:%s/hook\nWEBHOOK_HEADER=Bearer crsr_x\n' "$port" | "$g/bind" bearer >/dev/null 2>&1
+check 'bind completes a Bearer value into a header' '[ "$(. "$g/bearer.env"; printf "%s" "$WEBHOOK_HEADER")" = "Authorization: Bearer crsr_x" ]'
+
+printf 'WEBHOOK_URL=https://x.invalid/h\nWEBHOOK_HEADER=https://x.invalid/h\n' | "$g/bind" same >/dev/null 2>&1
+check 'bind refuses the same value twice'       '[ $? -eq 2 ] && [ ! -f "$g/same.env" ]'
+printf 'WEBHOOK_URL=https://x.invalid/h\nWEBHOOK_HEADER=Authorization: Bearer x\nRULES=yolo\n' | "$g/bind" rules >/dev/null 2>&1
+check 'bind refuses unknown rules'              '[ $? -eq 2 ]'
+printf 'WEBHOOK_URL=https://x.invalid/h\nWEBHOOK_HEADER=Authorization: Bearer x\nPROJECT=relative/path\n' | "$g/bind" rel >/dev/null 2>&1
+check 'bind refuses a relative project path'    '[ $? -eq 2 ]'
+printf 'garbage line\n' | "$g/bind" junk >/dev/null 2>&1
+check 'bind refuses a line that is not KEY=VALUE' '[ $? -eq 2 ]'
+printf 'WEBHOOK_URL=http://127.0.0.1:%s/fail\nWEBHOOK_HEADER=Authorization: Bearer x\n' "$port" | "$g/bind" broken >/dev/null 2>&1
+check 'bind exits 1 when the self-test ping fails' '[ $? -eq 1 ] && [ -f "$g/broken.env" ]'
 
 # --- reply ------------------------------------------------------------------
 echo hi | "$g/reply" demo user >/dev/null 2>&1;        check 'reply refuses an unbound session' '[ $? -eq 2 ]'
@@ -82,7 +124,7 @@ wait $bg
 check 'a running watcher wakes on a new reply'  'grep -q "^grokbot inbox #2: .*\"by\":\"relay\"" "$tmp/bg.out"'
 check 'the watcher removes its lock on exit'    '[ ! -d "$g/inbox/demo.lock" ]'
 
-mkdir "$g/inbox/demo.lock" && echo 999999 > "$g/inbox/demo.lock/pid"
+mkdir "$g/inbox/demo.lock" && echo 999999 > "$g/inbox/demo.lock/pid" && touch -t 202001010000 "$g/inbox/demo.lock/pid"
 WATCH_LIMIT=0 "$g/watch" demo >/dev/null 2>&1;         check 'watch takes over a dead lock'     '[ $? -eq 0 ]'
 
 echo 10 > "$g/inbox/demo.seen"
@@ -96,7 +138,19 @@ echo 'one more' | "$g/reply" demo user >/dev/null
 row=$("$g/status" demo | awk 'NR==2 {print $1, $2, $3, $4, $6, $7}')
 check 'status shows watcher, unread, webhook, rules, project' '[ "$row" = "demo no 1 ok ask /tmp/demo" ]'
 check 'status filters to one session'          '[ "$("$g/status" demo | wc -l | tr -d " ")" = 2 ]'
-check 'status lists every inbox without a filter' '[ "$("$g/status" | wc -l | tr -d " ")" = 2 ]'
+check 'status lists every inbox without a filter' '[ "$("$g/status" | wc -l | tr -d " ")" = $(( $(ls "$g/inbox"/*.jsonl | wc -l) + 1 )) ]'
+
+# --- unbind -----------------------------------------------------------------
+"$g/unbind" nobody >/dev/null 2>&1;                    check 'unbind refuses an unbound session' '[ $? -eq 2 ]'
+echo prompt > "$g/demo.standing-prompt.txt"
+WATCH_LIMIT=0 "$g/watch" demo >/dev/null   # read everything, so the next watcher waits
+WATCH_LIMIT=30 "$g/watch" demo > "$tmp/bg2.out" & bg=$!
+i=0; while [ ! -s "$g/inbox/demo.lock/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+out=$("$g/unbind" demo); rc=$?
+wait $bg 2>/dev/null
+check 'unbind archives the inbox and removes the files' '[ $rc -eq 0 ] && [ "$(ls "$g/inbox/archive"/demo-*.jsonl | wc -l | tr -d " ")" = 1 ] && [ ! -f "$g/inbox/demo.jsonl" ] && [ ! -f "$g/demo.env" ] && [ ! -f "$g/demo.standing-prompt.txt" ] && [ ! -f "$g/inbox/demo.seen" ]'
+check 'unbind stops a running watcher'         'printf "%s" "$out" | grep -q "stopped the watcher" && [ ! -d "$g/inbox/demo.lock" ]'
+"$g/unbind" bound --delete >/dev/null 2>&1;            check 'unbind --delete removes the inbox'  '[ $? -eq 0 ] && [ ! -f "$g/inbox/bound.jsonl" ] && [ -z "$(ls "$g/inbox/archive"/bound-*.jsonl 2>/dev/null)" ]'
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

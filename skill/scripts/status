@@ -27,7 +27,7 @@ for f in "$d"/*.jsonl; do
   seen=$(cat "$d/$name.seen" 2>/dev/null); case $seen in ''|*[!0-9]*) seen=0 ;; esac
   unread=$((lines - seen)); [ "$unread" -lt 0 ] && unread=$lines
 
-  if kill -0 "$(cat "$d/$name.lock/pid" 2>/dev/null)" 2>/dev/null; then watcher=yes; else watcher=no; fi
+  if [ -n "$(find "$d/$name.lock/pid" -mmin -1 2>/dev/null)" ]; then watcher=yes; else watcher=no; fi
 
   env="$HOME/.grokbot/$name.env"
   if [ -r "$env" ]; then

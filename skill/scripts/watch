@@ -17,9 +17,11 @@ limit=${WATCH_LIMIT:-1500}
 
 [ -f "$f" ] || { echo "watch: $f not found; '$1' is not bound" >&2; exit 2; }
 
-# One watcher per inbox. A lock left by a dead watcher is taken over.
+# One watcher per inbox. The watcher touches its pid file every few seconds;
+# a lock whose pid file is older than a minute belongs to a dead watcher and
+# is taken over. This works the same for sh, Git Bash, and PowerShell watchers.
 if ! mkdir "$lock" 2>/dev/null; then
-  if kill -0 "$(cat "$lock/pid" 2>/dev/null)" 2>/dev/null; then
+  if [ -n "$(find "$lock/pid" -mmin -1 2>/dev/null)" ]; then
     echo "watch: a watcher for $1 is already running" >&2; exit 1
   fi
   rm -rf "$lock"; mkdir "$lock" || exit 1
@@ -37,6 +39,7 @@ waited=0
 while [ "$(($(wc -l < "$f")))" -le "$n" ]; do
   [ "$waited" -ge "$limit" ] && exit 0
   sleep 5; waited=$((waited + 5))
+  touch "$lock/pid"
 done
 
 tail -n +$((n + 1)) "$f" | while IFS= read -r line; do
