@@ -107,37 +107,20 @@ try {
   $obj = $lines[0] | ConvertFrom-Json
   Check 'reply line has from, by, ts, session' ($obj.from -eq 'grokbot' -and $obj.by -eq 'user' -and $obj.session -eq 'demo' -and $lines[0] -match '"ts":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"' -and $obj.message -eq 're PR #12 merge: approved')
 
-  # --- watch --------------------------------------------------------------
-  $env:WATCH_LIMIT = '0'
-  $r = Run 'watch.ps1' @('demo')
-  Check 'watch prints the unread line'        ($r.Code -eq 0 -and $r.Out -like 'grokbot inbox #1: {*')
-  Check 'watch records its place'             (([IO.File]::ReadAllText((Join-Path $inbox 'demo.seen'))).Trim() -eq '1')
-  $r = Run 'watch.ps1' @('demo')
-  Check 'watch prints nothing when nothing is new' ($r.Code -eq 0 -and $r.Out -eq '')
-  Check 'watch refuses an unbound session'    ((Run 'watch.ps1' @('ghost')).Code -eq 2)
-
-  $env:WATCH_LIMIT = '30'
-  $bg = Start-Job -ScriptBlock { param($ps, $script, $home2) $env:GROKBOT_HOME = $home2; $env:WATCH_LIMIT = '30'; & $ps -NoProfile -File $script demo 2>&1 } -ArgumentList $ps, (Join-Path $g 'watch.ps1'), $home2
-  $pidFile = Join-Path (Join-Path $inbox 'demo.lock') 'pid'
-  $i = 0; while (-not (Test-Path $pidFile) -and $i -lt 100) { Start-Sleep -Milliseconds 100; $i++ }
-  $env:WATCH_LIMIT = '0'
-  Check 'a second watcher is refused'         ((Run 'watch.ps1' @('demo')).Code -eq 1)
-  Run 'reply.ps1' @('demo', 'relay', '-Message', 'pong') | Out-Null
-  $bgOut = (Receive-Job -Job $bg -Wait | ForEach-Object { "$_" }) -join "`n"
-  Check 'a running watcher wakes on a new reply' ($bgOut -like '*grokbot inbox #2: *"by":"relay"*')
-  Check 'the watcher removes its lock on exit' (-not (Test-Path (Join-Path $inbox 'demo.lock')))
-
-  New-Item -ItemType Directory -Path (Join-Path $inbox 'demo.lock') | Out-Null
-  [IO.File]::WriteAllText($pidFile, "999999`n"); (Get-Item $pidFile).LastWriteTime = Get-Date '2020-01-01'
-  Check 'watch takes over a dead lock'        ((Run 'watch.ps1' @('demo')).Code -eq 0)
-  [IO.File]::WriteAllText((Join-Path $inbox 'demo.seen'), "10`n")
-  $r = Run 'watch.ps1' @('demo')
-  Check 'watch starts over after the inbox shrank' ($r.Out -like 'grokbot inbox #1: *')
-
   # --- status -------------------------------------------------------------
+  $demoInbox = Join-Path $inbox 'demo.jsonl'
+  [IO.File]::WriteAllText((Join-Path $inbox 'demo.seen'), "$(@([IO.File]::ReadAllLines($demoInbox)).Count)`n")
   Run 'reply.ps1' @('demo', 'user', '-Message', 'one more') | Out-Null
   $row = ((Run 'status.ps1' @('demo')).Out -split "`n")[1] -split ' +'
-  Check 'status shows watcher, unread, webhook, rules, project' ($row[0] -eq 'demo' -and $row[1] -eq 'no' -and $row[2] -eq '1' -and $row[3] -eq 'ok' -and $row[5] -eq 'ask' -and $row[6] -eq '/tmp/demo')
+  Check 'status shows listening, unread, webhook, rules, project' ($row[0] -eq 'demo' -and $row[1] -eq 'no' -and $row[2] -eq '1' -and $row[3] -eq 'ok' -and $row[5] -eq 'ask' -and $row[6] -eq '/tmp/demo')
+  $tailExe = if ($IsWindows -or $PSVersionTable.PSVersion.Major -lt 6) { (Get-Command tail -ErrorAction SilentlyContinue).Source } else { '/usr/bin/tail' }
+  $listener = $null
+  if ($tailExe) {
+    $listener = Start-Process -FilePath $tailExe -ArgumentList @('-n', '0', '-F', $demoInbox) -PassThru -RedirectStandardOutput (Join-Path $tmp 'tail.out')
+    Start-Sleep -Milliseconds 500
+    $row = ((Run 'status.ps1' @('demo')).Out -split "`n")[1] -split ' +'
+    Check 'status sees a running listener'      ($row[1] -eq 'yes')
+  }
   Check 'status filters to one session'       ((((Run 'status.ps1' @('demo')).Out -split "`n").Count) -eq 2)
   $inboxes = @(Get-ChildItem -LiteralPath $inbox -Filter '*.jsonl' -File).Count
   Check 'status lists every inbox without a filter' ((((Run 'status.ps1' @()).Out -split "`n").Count) -eq ($inboxes + 1))
@@ -145,18 +128,16 @@ try {
   # --- unbind -------------------------------------------------------------
   Check 'unbind refuses an unbound session'   ((Run 'unbind.ps1' @('nobody')).Code -eq 2)
   [IO.File]::WriteAllText((Join-Path $g 'demo.standing-prompt.txt'), 'prompt')
-  $env:WATCH_LIMIT = '0'; Run 'watch.ps1' @('demo') | Out-Null   # read everything, so the next watcher waits
-  $env:WATCH_LIMIT = '30'
-  $bg = Start-Job -ScriptBlock { param($ps, $script, $home2) $env:GROKBOT_HOME = $home2; $env:WATCH_LIMIT = '30'; & $ps -NoProfile -File $script demo 2>&1 } -ArgumentList $ps, (Join-Path $g 'watch.ps1'), $home2
-  $i = 0; while (-not (Test-Path $pidFile) -and $i -lt 100) { Start-Sleep -Milliseconds 100; $i++ }
   $r = Run 'unbind.ps1' @('demo')
-  Wait-Job $bg -Timeout 20 | Out-Null
   Check 'unbind archives the inbox and removes the files' ($r.Code -eq 0 -and (@(Get-ChildItem (Join-Path $inbox 'archive') -Filter 'demo-*.jsonl').Count -eq 1) -and -not (Test-Path (Join-Path $inbox 'demo.jsonl')) -and -not (Test-Path (Join-Path $g 'demo.env')) -and -not (Test-Path (Join-Path $g 'demo.standing-prompt.txt')) -and -not (Test-Path (Join-Path $inbox 'demo.seen')))
-  Check 'unbind stops a running watcher'      ($r.Out -like '*stopped the watcher*' -and $bg.State -ne 'Running' -and -not (Test-Path (Join-Path $inbox 'demo.lock')))
-  Remove-Job $bg -Force -ErrorAction SilentlyContinue
+  if ($listener) {
+    Start-Sleep -Milliseconds 300
+    Check 'unbind ends a running listener'    ($r.Out -like "*stopped Claude's listener*" -and $listener.HasExited)
+  }
   $r = Run 'unbind.ps1' @('bound', '-Delete')
   Check 'unbind -Delete removes the inbox'    ($r.Code -eq 0 -and -not (Test-Path (Join-Path $inbox 'bound.jsonl')) -and (@(Get-ChildItem (Join-Path $inbox 'archive') -Filter 'bound-*.jsonl').Count -eq 0))
 } finally {
+  if ($listener -and -not $listener.HasExited) { Stop-Process -Id $listener.Id -Force -ErrorAction SilentlyContinue }
   Stop-Job $hook -ErrorAction SilentlyContinue; Remove-Job $hook -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

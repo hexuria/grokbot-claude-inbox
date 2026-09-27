@@ -1,6 +1,6 @@
 #Requires -Version 5.1
-# Show each bound session: is a watcher listening, how many replies Claude has
-# not read yet, whether its webhook env file exists, whether a Claude Code
+# Show each bound session: is Claude listening on its inbox, how many replies it
+# has not read yet, whether its webhook env file exists, whether a Claude Code
 # session is open for it, and its rules and project folder.
 #
 # Usage: powershell -NoProfile -File $HOME\.grokbot\status.ps1 [session]
@@ -23,8 +23,27 @@ function Read-EnvFile([string]$Path) {
   return $vars
 }
 
+# Claude listens with its Monitor tool, which runs "tail -F" on the inbox.
+# Returns one object per running tail (Id, CommandLine), or $null when the
+# processes can't be listed.
+function Get-TailProcesses {
+  try {
+    if ($PSVersionTable.PSVersion.Major -lt 6 -or $IsWindows) {
+      return @(Get-CimInstance Win32_Process -Filter "Name = 'tail.exe'" | ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; CommandLine = "$($_.CommandLine)" } })
+    }
+    return @(& ps -Ao 'pid=,command=' 2>$null | ForEach-Object {
+      $parts = "$_".Trim() -split '\s+', 2
+      if ($parts.Count -eq 2 -and ($parts[1] -split '\s+')[0] -match '(^|/)tail$') { [pscustomobject]@{ Id = [int]$parts[0]; CommandLine = $parts[1] } }
+    })
+  } catch { return $null }
+}
+function Test-Listens([string]$CommandLine, [string]$Name) {
+  return $CommandLine -match ('inbox[\\/]' + [regex]::Escape($Name) + '\.jsonl(\s|"|$)')
+}
+
 $base = if ($env:GROKBOT_HOME) { $env:GROKBOT_HOME } else { $HOME }
 $g = Join-Path $base '.grokbot'; $d = Join-Path $g 'inbox'
+$tails = Get-TailProcesses
 
 # Live Claude sessions, or $null when claude cannot be asked.
 $live = $null
@@ -36,8 +55,8 @@ if (Get-Command claude -ErrorAction SilentlyContinue) {
   } catch { $live = @() }
 }
 
-$fmt = '{0,-20} {1,-8} {2,-7} {3,-8} {4,-7} {5,-17} {6}'
-Write-Output ($fmt -f 'SESSION', 'WATCHER', 'UNREAD', 'WEBHOOK', 'CLAUDE', 'RULES', 'PROJECT')
+$fmt = '{0,-20} {1,-10} {2,-7} {3,-8} {4,-7} {5,-17} {6}'
+Write-Output ($fmt -f 'SESSION', 'LISTENING', 'UNREAD', 'WEBHOOK', 'CLAUDE', 'RULES', 'PROJECT')
 if (-not (Test-Path -LiteralPath $d)) { exit 0 }
 foreach ($file in (Get-ChildItem -LiteralPath $d -Filter '*.jsonl' -File | Sort-Object Name)) {
   $name = $file.BaseName
@@ -46,11 +65,10 @@ foreach ($file in (Get-ChildItem -LiteralPath $d -Filter '*.jsonl' -File | Sort-
   $lines = if ($file.Length -eq 0) { 0 } else { @([IO.File]::ReadAllLines($file.FullName)).Count }
   $seen = 0; $seenPath = Join-Path $d "$name.seen"
   if (Test-Path -LiteralPath $seenPath) { $raw = ([IO.File]::ReadAllText($seenPath)).Trim(); if ($raw -match '^\d+$') { $seen = [int]$raw } }
-  $unread = $lines - $seen; if ($unread -lt 0) { $unread = $lines }
+  $unread = $lines - $seen; if ($unread -lt 0) { $unread = 0 }
 
-  $pidFile = Join-Path (Join-Path $d "$name.lock") 'pid'
-  $watcher = 'no'
-  if ((Test-Path -LiteralPath $pidFile) -and (((Get-Date) - (Get-Item -LiteralPath $pidFile).LastWriteTime).TotalSeconds -lt 60)) { $watcher = 'yes' }
+  $listening = '?'
+  if ($null -ne $tails) { $listening = 'no'; foreach ($t in $tails) { if (Test-Listens $t.CommandLine $name) { $listening = 'yes'; break } } }
 
   $envPath = Join-Path $g "$name.env"; $project = ''; $rules = ''; $webhook = 'missing'
   if (Test-Path -LiteralPath $envPath) {
@@ -66,5 +84,5 @@ foreach ($file in (Get-ChildItem -LiteralPath $d -Filter '*.jsonl' -File | Sort-
 
   $rulesCol = if ($rules) { $rules } else { '-' }
   $projectCol = if ($project) { $project } else { '-' }
-  Write-Output ($fmt -f $name, $watcher, $unread, $webhook, $claude, $rulesCol, $projectCol)
+  Write-Output ($fmt -f $name, $listening, $unread, $webhook, $claude, $rulesCol, $projectCol)
 }
