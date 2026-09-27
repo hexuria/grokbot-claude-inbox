@@ -26,6 +26,16 @@ env_file="$HOME/.grokbot/$session.env"
 . "$env_file"
 [ -n "${WEBHOOK_URL:-}" ] && [ -n "${WEBHOOK_HEADER:-}" ] ||
   { echo "ping: $env_file needs WEBHOOK_URL and WEBHOOK_HEADER" >&2; exit 2; }
+case $WEBHOOK_URL in
+  http://*|https://*) ;;
+  *) echo "ping: WEBHOOK_URL in $env_file is not a URL" >&2; exit 2 ;;
+esac
+case $WEBHOOK_HEADER in
+  *' http'*|*':http'*)
+    echo "ping: WEBHOOK_HEADER in $env_file holds a URL where the token belongs" >&2; exit 2 ;;
+  ?*': '?*) ;;
+  *) echo "ping: WEBHOOK_HEADER in $env_file must look like 'Authorization: Bearer <token>'" >&2; exit 2 ;;
+esac
 
 message=$(cat)
 [ -n "$message" ] || { echo 'ping: empty message' >&2; exit 2; }

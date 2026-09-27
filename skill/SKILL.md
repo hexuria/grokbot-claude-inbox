@@ -90,7 +90,13 @@ Triggers: setup, add session, bind session. Steps 1–3 run once per Mac; skip e
    chmod 600 ~/.grokbot/<session>.env ~/.grokbot/inbox/<session>.jsonl
    ```
 
-   If neither path gives you the values, hand the user this block to run on the Mac themselves.
+   The header carries the routine's bearer token, a separate value from the URL. If neither path gives you the values, hand the user this block to run on the Mac themselves. Then prove the webhook before going on:
+
+   ```sh
+   ~/.grokbot/ping <session> update <<< 'relay self-test'
+   ```
+
+   It must exit 0. `ping` refuses a header that holds the URL, and a 401 means the token is wrong. Fix the file before step 8.
 8. **Connect Claude.** Follow **Connect Claude** below.
 9. **Test.** The standing prompt ends with Claude sending a `decision` ping that asks for `pong`, and the routine answers it. Setup is done when `tail -1 ~/.grokbot/inbox/<session>.jsonl` is that pong line and `~/.grokbot/status <session>` shows `WATCHER yes` and `UNREAD 0`. Confirm: "Bound `<session>`. Sessions now: …". If nothing arrives within a few minutes, see **Repair**.
 
@@ -169,7 +175,7 @@ Triggers: cleanup, remove session, unbind.
 | A session has gone quiet | Run `~/.grokbot/ping <session> update <<< 'relay self-test'`. If it fails, rewrite the env file (Add, step 7). If it arrives, **Reconnect a session**. |
 | `WATCHER no` with `UNREAD` above 0 | Claude stopped listening. **Reconnect a session**. |
 | A background session is `blocked` | It waits for a person. The user runs `claude attach <id>` and answers it. |
-| The user reports `ping` failing with 401 or 404 | The routine was deleted or its token changed. Rewrite the env file (Add, step 7). |
+| The user reports `ping` failing with 401 or 404 | The env file holds the wrong token, or the routine was deleted. Rewrite the env file (Add, step 7). |
 | A ping's `session` doesn't match its routine | That session's env file points at the wrong routine. Rewrite it. |
 | Claude reports a watcher already running | Two Claude sessions share one inbox. Keep one and tell the other to stop watching. |
 | An older session pings with a raw `curl` and a token in its prompt, or reads a shared `webhooks.env` | Move it to this setup: Add steps 1–3 and 7, then **Reconnect a session**. Its old `curl` allow rule can then go. |

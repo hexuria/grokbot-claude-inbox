@@ -187,7 +187,7 @@ Start with `~/.grokbot/status`, or ask Grok Bot to `list sessions`.
 |---|---|
 | `WATCHER no` and unread replies | Claude stopped listening. Ask Grok Bot to reconnect the session. |
 | A background session sits `blocked` | It waits for a person, on a permission prompt or a question. Run `claude attach <id>` and answer it. |
-| Claude says `ping` failed with 401 or 404 | The routine was deleted or its token changed. Ask Grok Bot to rewrite the env file. |
+| Claude says `ping` failed with 401 or 404 | The env file holds the wrong token, or the routine was deleted. Ask Grok Bot to rewrite the env file. |
 | Claude says a watcher is already running | Two Claude sessions share one inbox. Keep one. |
 | Claude keeps asking for permission to ping | The allow rules are missing. Ask Grok Bot to run setup again. |
 

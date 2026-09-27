@@ -59,6 +59,14 @@ check 'ping keeps the message byte for byte'   '[ "$(jq -r .message "$tmp/body")
 printf "WEBHOOK_URL='http://127.0.0.1:%s/fail'\nWEBHOOK_HEADER='Authorization: Bearer x'\n" "$port" > "$g/down.env"
 echo hi | "$g/ping" down update >/dev/null 2>&1;       check 'ping fails loudly on a server error' '[ $? -ne 0 ]'
 
+printf "WEBHOOK_URL='https://example.invalid/hook'\nWEBHOOK_HEADER='Authorization: Bearer https://example.invalid/hook'\n" > "$g/mixed.env"
+err=$(echo hi | "$g/ping" mixed update 2>&1 >/dev/null); rc=$?
+check 'ping refuses a header that holds the URL' '[ $rc -eq 2 ] && printf "%s" "$err" | grep -q "holds a URL"'
+printf "WEBHOOK_URL='https://example.invalid/hook'\nWEBHOOK_HEADER='crsr_token_without_header_name'\n" > "$g/bare.env"
+echo hi | "$g/ping" bare update >/dev/null 2>&1;       check 'ping refuses a header with no name'  '[ $? -eq 2 ]'
+printf "WEBHOOK_URL='crsr_token_in_the_url_slot'\nWEBHOOK_HEADER='Authorization: Bearer x'\n" > "$g/swapped.env"
+echo hi | "$g/ping" swapped update >/dev/null 2>&1;    check 'ping refuses a token in the URL slot' '[ $? -eq 2 ]'
+
 # --- reply ------------------------------------------------------------------
 echo hi | "$g/reply" demo user >/dev/null 2>&1;        check 'reply refuses an unbound session' '[ $? -eq 2 ]'
 touch "$g/inbox/demo.jsonl"
