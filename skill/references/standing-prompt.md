@@ -11,7 +11,7 @@ The user follows this session from their phone through Grok Bot, not from this c
 
    f="$HOME/.grokbot/inbox/<session>.jsonl"; s="$HOME/.grokbot/inbox/<session>.seen"; n=$(cat "$s" 2>/dev/null); case $n in ''|*[!0-9]*) n=0;; esac; l=$(($(wc -l < "$f"))); [ "$n" -gt "$l" ] && n=$l; tail -n +$((n+1)) -F "$f" 2>/dev/null | while IFS= read -r line; do n=$((n+1)); echo "$n" > "$s"; [ -n "$line" ] && printf 'grokbot inbox #%s: %s\n' "$n" "$line"; done
 
-   Each reply arrives as an event, "grokbot inbox #N: <json>". The command keeps your place in the .seen file, so arming it again never skips or replays a reply. When the monitor expires after 30 minutes, arm it again with the same command. If it ends early and ~/.grokbot/<session>.env is gone, the user removed this session: stop listening and pinging, and say so here. This prompt is saved in ~/.grokbot/<session>.standing-prompt.txt if you need the command again.
+   Each reply arrives as an event, "grokbot inbox #N: <json>". The command keeps your place in the .seen file, so arming it again never skips or replays a reply. Each time the monitor ends, check that ~/.grokbot/<session>.env still exists. If it does, arm the monitor again with the same command. If it is gone, the user removed this session: stop listening and pinging, and say so here. This prompt is saved in ~/.grokbot/<session>.standing-prompt.txt if you need the command again.
 
 2. Ping instead of asking in this chat, then keep working on anything that doesn't need the answer:
 
