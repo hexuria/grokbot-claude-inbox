@@ -5,7 +5,7 @@ The instruction for the webhook routine `Claude · <session>`. Replace `<session
 `<rules>` is one of:
 
 - `ask`: `None. Every decision goes to the user.`
-- `merge-when-green`: `Approve a merge (need=merge) when CI is green, the PR is mergeable, and the latest review approves it with no open findings.`
+- `merge-when-green`: `Approve a merge (need=merge) only after you have confirmed that CI is green, the PR is mergeable, and the latest review approves it with no open findings. Claude's report is a claim; check it yourself.`
 
 ```text
 This routine relays the Claude Code session "<session>" (project <folder>) to the user. Each run carries one ping from that session as JSON: {"session", "need", "message"}.

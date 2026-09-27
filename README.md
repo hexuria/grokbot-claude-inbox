@@ -30,7 +30,15 @@ Every ping starts one routine run, which counts against your Grok Bot usage.
 
 ## Install
 
-Add the `skill/` folder to your Grok Bot agent as a skill named `grokbot-claude-inbox`. Keep `scripts/` and `references/` next to `SKILL.md`. Then tell the agent `add session`.
+Copy `skill/` into your Grok Bot skills library as `grokbot-claude-inbox`, keeping `scripts/` and `references/` next to `SKILL.md`:
+
+```sh
+cp -R skill /path/to/grokbot/skills/grokbot-claude-inbox
+```
+
+If your Grok Bot has no skills library, paste the body of `skill/SKILL.md` into a new agent's description instead. The skill fetches its scripts and prompt templates from this repo when they are not beside it.
+
+Then tell the agent `add session`.
 
 The agent does the rest. It installs the scripts into `~/.grokbot`, adds allow rules for `ping` and `watch` to Claude Code after asking you, creates the routine, and connects the session.
 
@@ -120,10 +128,10 @@ You: list sessions
 ```
 
 ```text
-SESSION                  WATCHER  UNREAD  WEBHOOK  CLAUDE
-billing                  yes      0       ok       open
-parser                   no       2       ok       open
-docs-site                yes      0       ok       open
+SESSION              WATCHER  UNREAD  WEBHOOK  CLAUDE  RULES             PROJECT
+billing              yes      0       ok       open    ask               /Users/you/code/billing
+parser               no       2       ok       open    merge-when-green  /Users/you/code/parser
+docs-site            yes      0       ok       open    ask               /Users/you/code/docs-site
 ```
 
 `parser` has two replies Claude hasn't read and no watcher, so Claude stopped listening. Grok Bot offers to reconnect it. You can run `~/.grokbot/status` yourself too.
@@ -145,7 +153,7 @@ Grok Bot: Told parser to stop, then removed it. Sessions now: billing, docs-site
 | Path under `~/.grokbot` | Holds |
 |---|---|
 | `ping`, `watch`, `reply`, `status` | The scripts in [`skill/scripts`](skill/scripts) |
-| `<session>.env` | `WEBHOOK_URL` and `WEBHOOK_HEADER` for that session's routine, mode 600 |
+| `<session>.env` | `WEBHOOK_URL` and `WEBHOOK_HEADER` for that session's routine, plus `PROJECT`, `RULES`, and `ROUTINE`; mode 600 |
 | `inbox/<session>.jsonl` | Grok Bot's replies, one JSON line each, append-only |
 | `inbox/<session>.seen` | How many lines Claude has read |
 | `inbox/<session>.lock/` | Present while a watcher runs |
@@ -178,7 +186,7 @@ Start with `~/.grokbot/status`, or ask Grok Bot to `list sessions`.
 | Symptom | Fix |
 |---|---|
 | `WATCHER no` and unread replies | Claude stopped listening. Ask Grok Bot to reconnect the session. |
-| A background session sits `blocked` | It waits on a permission prompt. Run `claude attach <id>` and answer it. |
+| A background session sits `blocked` | It waits for a person, on a permission prompt or a question. Run `claude attach <id>` and answer it. |
 | Claude says `ping` failed with 401 or 404 | The routine was deleted or its token changed. Ask Grok Bot to rewrite the env file. |
 | Claude says a watcher is already running | Two Claude sessions share one inbox. Keep one. |
 | Claude keeps asking for permission to ping | The allow rules are missing. Ask Grok Bot to run setup again. |

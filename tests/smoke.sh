@@ -38,7 +38,7 @@ i=0; while [ ! -s "$tmp/port" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); do
 port=$(cat "$tmp/port")
 
 # --- ping -------------------------------------------------------------------
-printf "WEBHOOK_URL='http://127.0.0.1:%s/hook'\nWEBHOOK_HEADER='Authorization: Bearer test-token'\n" "$port" > "$g/demo.env"
+printf "WEBHOOK_URL='http://127.0.0.1:%s/hook'\nWEBHOOK_HEADER='Authorization: Bearer test-token'\nPROJECT='/tmp/demo'\nRULES='ask'\n" "$port" > "$g/demo.env"
 
 "$g/ping" demo decision </dev/null >/dev/null 2>&1;    check 'ping refuses an empty message'   '[ $? -eq 2 ]'
 echo hi | "$g/ping" demo later >/dev/null 2>&1;         check 'ping refuses an unknown need'    '[ $? -eq 2 ]'
@@ -93,8 +93,10 @@ WATCH_LIMIT=0 "$g/watch" ghost >/dev/null 2>&1;        check 'watch refuses an u
 
 # --- status -----------------------------------------------------------------
 echo 'one more' | "$g/reply" demo user >/dev/null
-row=$(PATH="$g:$PATH" "$g/status" demo | awk 'NR==2 {print $1, $2, $3, $4}')
-check 'status shows watcher, unread, webhook'   '[ "$row" = "demo no 1 ok" ]'
+row=$("$g/status" demo | awk 'NR==2 {print $1, $2, $3, $4, $6, $7}')
+check 'status shows watcher, unread, webhook, rules, project' '[ "$row" = "demo no 1 ok ask /tmp/demo" ]'
+check 'status filters to one session'          '[ "$("$g/status" demo | wc -l | tr -d " ")" = 2 ]'
+check 'status lists every inbox without a filter' '[ "$("$g/status" | wc -l | tr -d " ")" = 2 ]'
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

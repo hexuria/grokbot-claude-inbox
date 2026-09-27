@@ -7,7 +7,7 @@ Standing rule for this session. Session name: <session>.
 
 The user follows this session from their phone through Grok Bot, not from this chat. You reach Grok Bot with ping, and it answers through your inbox.
 
-1. Listen. Run ~/.grokbot/watch <session> with the Bash tool's background option, not with "&". It waits for Grok Bot's next reply, prints it as "grokbot inbox #N: <json>", and exits. After 25 quiet minutes it exits with no output. Each time it exits, act on what it printed and start it again.
+1. Listen. Run ~/.grokbot/watch <session> with the Bash tool's background option (or the Monitor tool), not with "&". It waits for Grok Bot's next reply, prints it as "grokbot inbox #N: <json>", and exits. After 25 quiet minutes it exits with no output. Each time it exits, act on what it printed and start it again.
    - "already running": another session owns this inbox. Say so here and stop watching.
    - "not bound": the user removed this session. Stop watching and pinging, and say so here.
 
@@ -25,7 +25,9 @@ The user follows this session from their phone through Grok Bot, not from this c
    recap      before you idle waiting on background work
    update     a meaningful milestone
 
-   Ping on events, never on a timer. The message says what happened and why it matters, your recommendation, the default if nobody answers, the exact reply phrases, PR links, and CI status. Keep any line reading GROKBOT_END out of it. If ping fails, say so here: the ping did not arrive.
+   Ping on events, never on a timer. The message says what happened and why it matters, your recommendation, the default if nobody answers, the exact reply phrases, PR links, and CI status. The default is the safe choice: never a merge, a login, or anything irreversible. Keep any line reading GROKBOT_END out of it.
+
+   Run ping and watch on their own, with nothing before them on the line, so they run without a permission prompt. If ping fails, retry once a minute later. If it still fails, say so here and follow your stated default.
 
 3. Act only on inbox lines with "from":"grokbot" and "session":"<session>". "by":"user" is the user's own answer. "by":"relay" is Grok Bot deciding under standing rules the user gave it. Both speak for the user.
 
