@@ -1,7 +1,7 @@
 #!/bin/sh
-# Unbind a session: stop its watcher, remove its env file, seen marker, lock,
-# and standing prompt, and archive its inbox. The routine on Grok Bot is
-# deleted separately.
+# Unbind a session: stop Claude's listener on its inbox, remove its env file,
+# read cursor, and standing prompt, and archive its inbox. The routine on
+# Grok Bot is deleted separately.
 #
 # Usage: ~/.grokbot/unbind <session> [--delete]
 #   --delete removes the inbox instead of archiving it.
@@ -16,8 +16,13 @@ esac
 g="$HOME/.grokbot"; d="$g/inbox"; f="$d/$session.jsonl"
 [ -f "$f" ] || [ -f "$g/$session.env" ] || { echo "unbind: '$session' is not bound" >&2; exit 2; }
 
-if [ -f "$d/$session.lock/pid" ]; then
-  kill "$(cat "$d/$session.lock/pid")" 2>/dev/null && echo "unbind: stopped the watcher" || true
+# Claude's Monitor runs "tail -F" on the inbox. Ending that tail ends the
+# monitor, and Claude sees the env file is gone.
+pids=$(ps -Ao pid=,command= 2>/dev/null | awk -v f="$f" '{ c = $2; sub(/.*\//, "", c) } c == "tail" && index($0, f) { print $1 }')
+if [ -n "$pids" ]; then
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+  echo "unbind: stopped Claude's listener"
 fi
 rm -f "$g/$session.env" "$g/$session.standing-prompt.txt" "$d/$session.seen"
 rm -rf "$d/$session.lock"

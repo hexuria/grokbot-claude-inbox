@@ -33,7 +33,7 @@ open(os.path.join(out, "port"), "w").write(str(s.server_port))
 s.serve_forever()
 PY
 python3 "$tmp/hook.py" "$tmp" & hook=$!
-trap 'kill $hook 2>/dev/null; wait $hook 2>/dev/null; rm -rf "$tmp"' EXIT
+trap 'kill $hook 2>/dev/null; wait $hook 2>/dev/null; pkill -f "$tmp/home" 2>/dev/null; rm -rf "$tmp"' EXIT
 i=0; while [ ! -s "$tmp/port" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 port=$(cat "$tmp/port")
 
@@ -109,47 +109,51 @@ echo 're PR #12 merge: approved' | "$g/reply" demo user >/dev/null
 check 'reply appends one JSON line'            '[ "$(wc -l < "$g/inbox/demo.jsonl" | tr -d " ")" = 1 ]'
 check 'reply line has from, by, ts, session'   'jq -e "select(.from==\"grokbot\" and .by==\"user\" and .session==\"demo\" and (.ts|test(\"Z$\")))" "$g/inbox/demo.jsonl" >/dev/null'
 
-# --- watch ------------------------------------------------------------------
-out=$(WATCH_LIMIT=0 "$g/watch" demo)
-check 'watch prints the unread line'           'printf "%s" "$out" | grep -q "^grokbot inbox #1: {"'
-check 'watch records its place'                '[ "$(cat "$g/inbox/demo.seen")" = 1 ]'
-out=$(WATCH_LIMIT=0 "$g/watch" demo)
-check 'watch prints nothing when nothing is new' '[ -z "$out" ]'
+# --- listener: the Monitor command from the standing prompt ---------------
+cmd=$(sed -n 's/^   \(f="\$HOME\/\.grokbot\/inbox\/.*done\)$/\1/p' "$repo/skill/references/standing-prompt.md" | sed 's/<session>/demo/g')
+check 'the standing prompt holds one listener command' '[ -n "$cmd" ] && [ "$(printf "%s\n" "$cmd" | wc -l | tr -d " ")" = 1 ]'
+listen() { sh -c "$cmd" > "$tmp/listen.out" 2>&1 & }
+stop_listener() {
+  pids=$(ps -Ao pid=,command= | awk -v f="$g/inbox/demo.jsonl" '{ c = $2; sub(/.*\//, "", c) } c == "tail" && index($0, f) { print $1 }')
+  [ -n "$pids" ] && kill $pids 2>/dev/null; sleep 0.5
+}
+wait_for() { i=0; while ! grep -q "$1" "$tmp/listen.out" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
 
-WATCH_LIMIT=30 "$g/watch" demo > "$tmp/bg.out" & bg=$!
-i=0; while [ ! -s "$g/inbox/demo.lock/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-WATCH_LIMIT=0 "$g/watch" demo >/dev/null 2>&1;         check 'a second watcher is refused'      '[ $? -eq 1 ]'
-echo 'pong' | "$g/reply" demo relay >/dev/null
-wait $bg
-check 'a running watcher wakes on a new reply'  'grep -q "^grokbot inbox #2: .*\"by\":\"relay\"" "$tmp/bg.out"'
-check 'the watcher removes its lock on exit'    '[ ! -d "$g/inbox/demo.lock" ]'
-
-mkdir "$g/inbox/demo.lock" && echo 999999 > "$g/inbox/demo.lock/pid" && touch -t 202001010000 "$g/inbox/demo.lock/pid"
-WATCH_LIMIT=0 "$g/watch" demo >/dev/null 2>&1;         check 'watch takes over a dead lock'     '[ $? -eq 0 ]'
-
-echo 10 > "$g/inbox/demo.seen"
-out=$(WATCH_LIMIT=0 "$g/watch" demo)
-check 'watch starts over after the inbox shrank' 'printf "%s" "$out" | grep -q "^grokbot inbox #1: "'
-
-WATCH_LIMIT=0 "$g/watch" ghost >/dev/null 2>&1;        check 'watch refuses an unbound session' '[ $? -eq 2 ]'
+rm -f "$g/inbox/demo.seen"
+listen; wait_for '#1:'
+check 'the listener prints the unread line'     'grep -q "^grokbot inbox #1: {" "$tmp/listen.out"'
+check 'the listener records its place'          '[ "$(cat "$g/inbox/demo.seen")" = 1 ]'
+echo 'pong' | "$g/reply" demo relay >/dev/null; wait_for '#2:'
+check 'a running listener prints a new reply'   'grep -q "^grokbot inbox #2: .*\"by\":\"relay\"" "$tmp/listen.out"'
+check 'it keeps listening after a reply'        '[ -n "$(ps -Ao command | grep -F "$g/inbox/demo.jsonl" | grep -v grep)" ]'
+stop_listener
+echo 'sent while nobody listened' | "$g/reply" demo user >/dev/null
+listen; wait_for '#3:'
+check 'a re-armed listener catches up without replay' '[ "$(grep -c "^grokbot inbox" "$tmp/listen.out")" = 1 ] && grep -q "^grokbot inbox #3: " "$tmp/listen.out"'
+stop_listener
+echo 99 > "$g/inbox/demo.seen"
+listen; sleep 1
+echo 'after a runaway cursor' | "$g/reply" demo user >/dev/null; wait_for '#4:'
+check 'a cursor past the end skips nothing new'  'grep -q "^grokbot inbox #4: .*runaway" "$tmp/listen.out" && [ "$(grep -c "^grokbot inbox" "$tmp/listen.out")" = 1 ]'
 
 # --- status -----------------------------------------------------------------
+row=$("$g/status" demo | awk 'NR==2 {print $1, $2, $3, $4, $6, $7}')
+check 'status sees the running listener'         '[ "$row" = "demo yes 0 ok ask /tmp/demo" ]'
+stop_listener
 echo 'one more' | "$g/reply" demo user >/dev/null
 row=$("$g/status" demo | awk 'NR==2 {print $1, $2, $3, $4, $6, $7}')
-check 'status shows watcher, unread, webhook, rules, project' '[ "$row" = "demo no 1 ok ask /tmp/demo" ]'
+check 'status shows listening, unread, webhook, rules, project' '[ "$row" = "demo no 1 ok ask /tmp/demo" ]'
 check 'status filters to one session'          '[ "$("$g/status" demo | wc -l | tr -d " ")" = 2 ]'
 check 'status lists every inbox without a filter' '[ "$("$g/status" | wc -l | tr -d " ")" = $(( $(ls "$g/inbox"/*.jsonl | wc -l) + 1 )) ]'
 
 # --- unbind -----------------------------------------------------------------
 "$g/unbind" nobody >/dev/null 2>&1;                    check 'unbind refuses an unbound session' '[ $? -eq 2 ]'
 echo prompt > "$g/demo.standing-prompt.txt"
-WATCH_LIMIT=0 "$g/watch" demo >/dev/null   # read everything, so the next watcher waits
-WATCH_LIMIT=30 "$g/watch" demo > "$tmp/bg2.out" & bg=$!
-i=0; while [ ! -s "$g/inbox/demo.lock/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+listen; wait_for '#5:'
 out=$("$g/unbind" demo); rc=$?
-wait $bg 2>/dev/null
+sleep 0.5
 check 'unbind archives the inbox and removes the files' '[ $rc -eq 0 ] && [ "$(ls "$g/inbox/archive"/demo-*.jsonl | wc -l | tr -d " ")" = 1 ] && [ ! -f "$g/inbox/demo.jsonl" ] && [ ! -f "$g/demo.env" ] && [ ! -f "$g/demo.standing-prompt.txt" ] && [ ! -f "$g/inbox/demo.seen" ]'
-check 'unbind stops a running watcher'         'printf "%s" "$out" | grep -q "stopped the watcher" && [ ! -d "$g/inbox/demo.lock" ]'
+check 'unbind ends a running listener'         'printf "%s" "$out" | grep -q "stopped Claude" && [ -z "$(ps -Ao command | grep -F "$g/inbox/demo.jsonl" | grep -v grep)" ]'
 "$g/unbind" bound --delete >/dev/null 2>&1;            check 'unbind --delete removes the inbox'  '[ $? -eq 0 ] && [ ! -f "$g/inbox/bound.jsonl" ] && [ -z "$(ls "$g/inbox/archive"/bound-*.jsonl 2>/dev/null)" ]'
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
